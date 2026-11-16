@@ -1,0 +1,35 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## What this is
+
+`src/scripts/GraXpertLocal.js` is a single-file PixInsight script (PJSR, `#engine v8`) that drives a locally installed GraXpert 4.0.0 through its CLI. It covers AI background extraction, sample-free extraction, AI denoising, and grid extraction (RBF/Kriging/Splines) from points placed in the GraXpert app. It was written from scratch to replace the closed-source GraXpert4PixInsight module, which its author withdrew. Do not decompile or copy that module.
+
+There is no build system, git repo, or test suite.
+
+## Checking changes
+
+- Syntax check outside PixInsight. The `#` preprocessor lines must be commented out first:
+  `sed 's|^#|//#|' src/scripts/GraXpertLocal.js | node --check -`
+- Check the GraXpert CLI contract directly. The default executable is `/Applications/GraXpert.app/Contents/MacOS/GraXpert`:
+  `GraXpert -cli -cmd background-extraction -h` and `GraXpert -cli -cmd denoising -h`
+- Everything else (PJSR classes such as `ImageWindow`, `ExternalProcess`, `Settings`, and `Dialog`) can only be tested inside PixInsight. Install it with *Script > Feature Scripts… > Add* and choose `src/scripts/`. It then appears under *Script > Utilities > GraXpertLocal*. Say clearly when a change has not been run inside PixInsight.
+
+## Architecture
+
+- **Params** (`Params()`): the `FIELDS` map (name → `DataType_*`) is the only list of parameters. `load`/`save` (PixInsight `Settings`) and `exportParameters`/`importParameters` (process-icon instances) iterate over it. To add a parameter, add it to `FIELDS` and to `reset()`.
+- **Run flow**: `execute()` writes the view to a temporary 32-bit float XISF and calls `runGraXpert()` → `buildArgs()` → `runProcess()`. It then reads back `<output>.xisf` and, if `-bg` was passed, `<output>_background.xisf`. Finally it either replaces the view (undoable `beginProcess`/`endProcess`) or opens a new window. `copyMetadata()` gives that window the source's STF and, if the size matches, its FITS keywords and astrometric solution. Temporary files are always removed in `finally`.
+- **`runProcess`** polls `waitForFinished(250)` with `processEvents()`, so the GUI stays responsive and the console Abort button works by killing the process and throwing `AbortError`. The output log is always buffered and is printed on failure even when `showLogs` is off. Abort is disabled while GraXpert's log shows a model download running (`DOWNLOAD_START`/`DOWNLOAD_END`), because killing it then corrupts the model folder. `runGraXpert` refuses GraXpert older than `MIN_GRAXPERT` (version from `-v`, cached per exe) and asks before a run downloads a model that isn't installed (no prompt for headless view-target runs).
+- **GPU fallback**: if a run fails with `gpu` enabled, `runGraXpert` retries once with `-gpu false`, because CoreML denoising can crash.
+- **Realtime denoise preview** (`DenoisePreview`): this depends on the verified GraXpert behaviour `result = orig + strength·(AI − orig)`, unclipped. The AI runs once at strength 1.0 on a crop of at most 512 px, the difference is stored, and moving the strength slider only re-blends locally. If GraXpert ever changes this formula, the preview will be wrong.
+- **Models**: `modelChoices()` lists local versions from `~/Library/Application Support/GraXpert/<kind>/` and adds the remote-only versions from `REMOTE_MODELS` (copied from the 4.0.0 `-h` output), marked with ` *`. `cleanVersion()` strips the marker before the value is passed to `-ai_version`.
+- **Grid extraction** (`CMD_GRID`): passes `-preferences_file` (the GraXpert app's `preferences.json`, which holds `background_points`, `width` and `height`) together with `-interpolation`, `-smoothing` and `-correction`. Command-line values override the file's values. GraXpert 4.0.0 exits 0 even when the image size doesn't match the points, so `checkGridPrefs()` must check the size and the minimum point count before every run.
+- **Deconvolution is not available through the 4.0.0 CLI.** Export/Import is the workaround. Export writes `~/GraXpertLocal/<id>.xisf` and opens the GUI with `open -n -a`. Import opens every image in that folder that is newer than the last export.
+- **Entry points** (`main()`): a view-target instance runs headless with no dialog; a global-target instance imports its parameters and then shows the dialog. The dialog's Reset button closes and reopens the dialog with defaults (the `resetRequested` loop).
+
+## Conventions
+
+- PixInsight code style: 3-space indent, braces on their own lines, spaces inside parentheses.
+- The script is macOS-specific (default exe path, `.app` bundle handling, `/usr/bin/open`).
+- Defaults should match GraXpert's own defaults (its `preferences.json` / `-h`).
