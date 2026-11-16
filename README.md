@@ -29,8 +29,9 @@ Pick a target view and an operation, set the parameters, and click *Apply*.
 - **New windows** copy the source's screen stretch. When the size is unchanged, they also copy its FITS keywords and astrometric solution.
 - **Show background model**: opens the extracted background as a separate image.
 - **GPU acceleration**: if GraXpert fails with the GPU on, the script retries once on the CPU. CoreML denoising can crash.
-- **AI model**: versions marked `*` are not stored locally yet. GraXpert downloads them on first use, so don't abort the download.
+- **AI model**: versions marked `*` are not stored locally yet. GraXpert downloads them on first use, so don't abort the download. *Download* installs the selected version now (*latest* means the newest remote version). The list of remote versions comes from GraXpert itself.
 - **Realtime preview** (denoising): runs the AI once on a 512 px centre crop, or on the whole selected preview. After that, moving the Strength slider updates the preview instantly.
+- **Apply with denoising** keeps the dialog open. The first Apply runs the AI on the full image. Applying again with a different Strength only re-blends the result, which is instant, and always starts from the original image. Changing the target view or the model runs the AI again.
 - **Abort**: the console's Abort button stops GraXpert.
 - **New instance** (triangle icon): drag it onto an image to run with the saved parameters without opening the dialog, or onto the workspace to create a process icon.
 - **Reset**: restores GraXpert's default parameters.

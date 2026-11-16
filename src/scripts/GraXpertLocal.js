@@ -9,7 +9,9 @@
 // Verified GraXpert 4.0.0 behaviour this script relies on:
 //  - output is written to <output>.<input ext>, background to <output>_background.<ext>
 //  - denoise result == original + strength * (AI - original), unclipped
-//    (this makes the realtime preview exact: run AI once, blend locally)
+//    (this makes the realtime preview and full-image re-apply exact: run AI once, blend locally)
+//  - `-h` lists remote AI models as "available remotely: [...]"; a model is
+//    downloaded before inference, so running on a blank image installs it.
 //  - CoreML (GPU) denoising can crash; we retry once with -gpu false.
 //  - 4.0.0 CLI has no deconvolution command; use Export/Import with the GUI.
 
@@ -25,7 +27,7 @@
 #include <pjsr/UndoFlag.jsh>
 
 #define TITLE "GraXpertLocal"
-#define VERSION "2.2"
+#define VERSION "2.3"
 #define SETTINGS_KEY "GraXpertLocal/"
 #define DEFAULT_EXE "/Applications/GraXpert.app/Contents/MacOS/GraXpert"
 #define PREVIEW_SIZE 512
@@ -39,7 +41,7 @@ const DOWNSAMPLE = [ 1, 2, 4, 8 ];
 const MODEL_ROOT = File.homeDirectory + "/Library/Application Support/GraXpert/";
 const EXPORT_DIR = File.homeDirectory + "/GraXpertLocal";
 const GUI_PREFS = MODEL_ROOT + "preferences.json";
-// Remote model versions as listed by GraXpert 4.0.0 `-h`.
+// Fallback remote model versions (GraXpert 4.0.0 `-h`), used when `-h` can't be parsed.
 const REMOTE_MODELS = {
    "bge-ai-models": [ "1.0.1", "1.0.0" ],
    "denoise-ai-models": [ "3.0.2", "3.0.1", "3.0.0", "2.0.0", "1.1.0", "1.0.0" ]
@@ -169,11 +171,11 @@ function listSubdirs( dir )
 }
 
 // "latest", then local versions, then remote-only versions marked with " *".
-function modelChoices( kind )
+function modelChoices( exe, kind )
 {
    let local = listSubdirs( MODEL_ROOT + kind );
    let items = [ "latest" ].concat( local );
-   for ( let v of REMOTE_MODELS[kind] )
+   for ( let v of remoteModels( exe, kind ) )
       if ( local.indexOf( v ) < 0 )
          items.push( v + " *" );
    return items;
@@ -382,6 +384,39 @@ function graxpertVersion( exe )
    return versionCache[exe];
 }
 
+// Versions from the `-ai_version` help text, which argparse wraps over several
+// log lines: "... available remotely: [1.0.1, 1.0.0]". Null if absent.
+function parseRemoteModels( log )
+{
+   let m = log.replace( /^.*root INFO/gm, "" ).replace( /\s+/g, " " )
+              .match( /available remotely:\s*\[([^\]]*)\]/ );
+   return m ? m[1].match( /\d+\.\d+\.\d+/g ) : null;
+}
+
+// Remote model versions as GraXpert itself reports them, newest first.
+// Cached per executable and kind: each `-h` costs about a second.
+const remoteCache = {};
+function remoteModels( exe, kind )
+{
+   let key = exe + "|" + kind;
+   if ( !( key in remoteCache ) )
+   {
+      if ( !File.exists( exe ) )
+         return REMOTE_MODELS[kind];
+      let list = null;
+      try
+      {
+         list = parseRemoteModels( runProcess( exe, [ "-cli", "-cmd",
+                   kind == "denoise-ai-models" ? "denoising" : "background-extraction", "-h" ], false ).log );
+      }
+      catch ( e ) {}
+      if ( !list )
+         console.warningln( "Cannot read remote " + kind + " from GraXpert; using the built-in list." );
+      remoteCache[key] = list || REMOTE_MODELS[kind];
+   }
+   return remoteCache[key];
+}
+
 function versionLess( a, b )
 {
    let x = a.split( "." ).map( Number ), y = b.split( "." ).map( Number );
@@ -417,6 +452,43 @@ function confirmDownload( p )
                         "This may take a few minutes and cannot be aborted.",
                         TITLE, StdIcon_Question, StdButton_Yes, StdButton_No ).execute() != StdButton_Yes )
       throw new AbortError;
+}
+
+// Installs the selected AI model ("latest" = newest remote) ahead of a real run
+// by processing a blank image. CPU only: CoreML can crash on the blank image,
+// and the download happens before inference anyway.
+function downloadModel( p )
+{
+   let kind = p.command == CMD_DENOISE ? "denoise-ai-models" : "bge-ai-models";
+   let field = p.command == CMD_DENOISE ? "denoiseAiVersion" : "bgeAiVersion";
+   let v = cleanVersion( p[field] );
+   if ( v == "latest" )
+      v = remoteModels( p.exe, kind )[0];
+   let dir = MODEL_ROOT + kind + "/" + v;
+   if ( File.directoryExists( dir ) )
+   {
+      console.noteln( "AI model " + v + " is already installed." );
+      return;
+   }
+   let q = Object.assign( new Params, p, { showBackground: false } );
+   q[field] = v;
+   let base = tempBase();
+   let input = base + "_in.xisf", output = base + "_out";
+   let blank = new Image( 256, 256, 1, ColorSpace_Gray, 32, SampleType_Real );
+   try
+   {
+      blank.fill( 0 );
+      writeXisf( blank, input );
+      runGraXpert( q, input, output, { gpu: false } );
+   }
+   finally
+   {
+      blank.free();
+      removeFiles( [ input, output + ".xisf" ] );
+   }
+   if ( !File.directoryExists( dir ) )
+      throw new Error( "GraXpert finished but AI model " + v + " is not in " + MODEL_ROOT + kind );
+   console.noteln( "AI model " + v + " installed." );
 }
 
 function tempBase()
@@ -557,7 +629,7 @@ function showInfo( p )
    for ( let kind of [ "bge-ai-models", "denoise-ai-models",
                        "deconvolution-object-ai-models", "deconvolution-stars-ai-models" ] )
       console.writeln( kind + ": local [" + listSubdirs( MODEL_ROOT + kind ).join( ", " ) + "]" +
-                       ( REMOTE_MODELS[kind] ? ", remote [" + REMOTE_MODELS[kind].join( ", " ) + "]" : "" ) );
+                       ( REMOTE_MODELS[kind] ? ", remote [" + remoteModels( p.exe, kind ).join( ", " ) + "]" : "" ) );
    console.writeln( "Export folder: " + EXPORT_DIR );
 }
 
@@ -612,8 +684,38 @@ function importFromGui( view )
 }
 
 // ---------------------------------------------------------------------------
-// Realtime denoise preview: AI runs once at strength 1, strength is blended here.
+// Denoise strength blending: the AI runs once at strength 1 and any strength is
+// then orig + strength * diff, computed locally.
 
+// AI result minus input, at strength 1.
+function denoiseDiff( p, image )
+{
+   let base = tempBase();
+   let input = base + "_in.xisf", output = base + "_out";
+   let diff;
+   try
+   {
+      writeXisf( image, input );
+      runGraXpert( p, input, output, { strength: 1.0 } );
+      diff = readXisf( output + ".xisf" );
+   }
+   finally
+   {
+      removeFiles( [ input, output + ".xisf" ] );
+   }
+   diff.apply( image, ImageOp_Sub );
+   return diff;
+}
+
+function blend( orig, diff, strength )
+{
+   let t = new Image( diff );
+   t.apply( strength, ImageOp_Mul );
+   t.apply( orig, ImageOp_Add );
+   return t;
+}
+
+// Realtime preview on a crop: moving the Strength slider re-blends instantly.
 function DenoisePreview()
 {
    this.orig = null;
@@ -629,19 +731,7 @@ function DenoisePreview()
                                 : new Rect( ( src.width - w ) >> 1, ( src.height - h ) >> 1,
                                             ( ( src.width - w ) >> 1 ) + w, ( ( src.height - h ) >> 1 ) + h );
       let crop = copyRect( src, rect );
-      let base = tempBase();
-      let input = base + "_in.xisf", output = base + "_out";
-      try
-      {
-         writeXisf( crop, input );
-         runGraXpert( p, input, output, { strength: 1.0 } );
-         this.diff = readXisf( output + ".xisf" );
-      }
-      finally
-      {
-         removeFiles( [ input, output + ".xisf" ] );
-      }
-      this.diff.apply( crop, ImageOp_Sub );
+      this.diff = denoiseDiff( p, crop );
       this.orig = crop;
       this.window = newWindow( crop, "GraXpertLocal_preview", view );
       this.update( p.strength );
@@ -651,9 +741,7 @@ function DenoisePreview()
    {
       if ( !this.window || this.window.isNull )
          return;
-      let t = new Image( this.diff );
-      t.apply( strength, ImageOp_Mul );
-      t.apply( this.orig, ImageOp_Add );
+      let t = blend( this.orig, this.diff, strength );
       try
       {
          let v = this.window.mainView;
@@ -674,6 +762,63 @@ function DenoisePreview()
       if ( this.orig ) this.orig.free();
       if ( this.diff ) this.diff.free();
       this.orig = this.diff = this.window = null;
+   };
+}
+
+// Full-image denoise from the dialog: the AI runs once per (view, model); a
+// later Apply with another strength only re-blends. The dialog is modal, so
+// nothing else can change the view while this cache lives. The original is
+// kept, so re-applying in Replace mode never denoises an already denoised image.
+function DenoiseFull()
+{
+   this.viewId = null;
+   this.model = null;
+   this.orig = null;
+   this.diff = null;
+   this.window = null;   // result window in new-image mode, reused across Applies
+
+   this.apply = function( p, view )
+   {
+      if ( this.viewId != view.fullId )
+      {
+         this.close();
+         this.viewId = view.fullId;
+         this.orig = new Image( view.image );
+      }
+      let model = cleanVersion( p.denoiseAiVersion );
+      if ( !this.diff || this.model != model )
+      {
+         if ( this.diff ) this.diff.free();
+         this.diff = null;
+         this.diff = denoiseDiff( p, this.orig );
+         this.model = model;
+      }
+      else
+         console.noteln( "Reusing the AI result; blending strength " + p.strength.toFixed( 3 ) + "." );
+      let t = blend( this.orig, this.diff, p.strength );
+      try
+      {
+         let v = p.replaceImage ? view : this.window && !this.window.isNull ? this.window.mainView : null;
+         if ( v )
+         {
+            v.beginProcess();
+            v.image.assign( t );
+            v.endProcess();
+         }
+         else
+            this.window = newWindow( t, safeId( view ) + "_GraXpert", view );
+      }
+      finally
+      {
+         t.free();
+      }
+   };
+
+   this.close = function()
+   {
+      if ( this.orig ) this.orig.free();
+      if ( this.diff ) this.diff.free();
+      this.orig = this.diff = this.viewId = this.model = this.window = null;
    };
 }
 
@@ -816,7 +961,7 @@ function GraXpertLocalDialog( p )
       dialog.modelCombo.clear();
       if ( !usesModel() )
          return;
-      let items = modelChoices( p.command == CMD_DENOISE ? "denoise-ai-models" : "bge-ai-models" );
+      let items = modelChoices( p.exe, p.command == CMD_DENOISE ? "denoise-ai-models" : "bge-ai-models" );
       for ( let i of items )
          dialog.modelCombo.addItem( i );
       let cur = cleanVersion( p[modelField()] );
@@ -826,7 +971,14 @@ function GraXpertLocalDialog( p )
       else
          dialog.modelCombo.editText = cur;
    };
-   this.modelRow = row( this, "AI model:", this.modelCombo );
+   this.downloadButton = button( this, "Download", "Install the selected AI model now (\"latest\" = newest remote " +
+                                 "version), so a later run does not stop to download it.",
+                                 () => { dialog.syncModel(); downloadModel( p ); dialog.fillModels(); } );
+   let modelSizer = new HorizontalSizer;
+   modelSizer.spacing = 4;
+   modelSizer.add( this.modelCombo, 100 );
+   modelSizer.add( this.downloadButton );
+   this.modelRow = row( this, "AI model:", modelSizer );
 
    // --- AI background extraction
    // Shared by AI and grid extraction (both map to -smoothing).
@@ -932,7 +1084,7 @@ function GraXpertLocalDialog( p )
       dialog.sfGroup.visible = p.command == CMD_SAMPLE_FREE;
       dialog.bgOptGroup.visible = p.command != CMD_DENOISE;
       dialog.dnGroup.visible = p.command == CMD_DENOISE;
-      dialog.modelCombo.enabled = usesModel();
+      dialog.modelCombo.enabled = dialog.downloadButton.enabled = usesModel();
       dialog.fillModels();
       dialog.adjustToContents();
    };
@@ -961,20 +1113,26 @@ function GraXpertLocalDialog( p )
       this.dialog.newInstance();
    };
 
+   let full = new DenoiseFull;
    let finish = ok =>
    {
       preview.close();
+      full.close();
       if ( ok ) dialog.ok(); else dialog.cancel();
    };
    this.resetButton = button( this, "Reset", "Restore all parameters to defaults.",
                               () => { dialog.resetRequested = true; finish( false ); } );
-   this.okButton = button( this, "Apply", "Process the target view.", () =>
+   this.okButton = button( this, "Apply", "Process the target view. For AI denoising the dialog stays open: " +
+                           "change Strength and Apply again to re-blend without re-running the AI.", () =>
    {
-      target();
+      let v = target();
       p.exe = dialog.exeEdit.text.trim();
       p.prefsFile = dialog.prefsEdit.text.trim();
       dialog.syncModel();
-      finish( true );
+      if ( p.command != CMD_DENOISE )
+         return finish( true );
+      full.apply( p, v );
+      console.noteln( TITLE + ": done on " + v.fullId );
    } );
    this.cancelButton = button( this, "Close", "", () => finish( false ) );
 
@@ -1002,7 +1160,7 @@ function GraXpertLocalDialog( p )
    this.sizer.add( this.toolsGroup );
    this.sizer.add( buttons );
 
-   this.onClose = () => preview.close();
+   this.onClose = () => { preview.close(); full.close(); };
    this.setMinWidth( 520 );
    this.updateVisibility();
 }
