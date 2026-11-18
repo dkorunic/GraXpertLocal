@@ -1193,7 +1193,8 @@ var GraXpertLocalDialog = class extends Dialog
       this.sizer.add( this.toolsGroup );
       this.sizer.add( buttons );
 
-      this.onClose = () => { preview.close(); full.close(); };
+      // Explicit true: returning false vetoes the close, and v8 may treat `undefined` the same way.
+      this.onClose = () => { preview.close(); full.close(); return true; };
       this.setMinWidth( 520 );
       this.updateVisibility();
    }
