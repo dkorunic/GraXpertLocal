@@ -31,5 +31,7 @@ There is no build system, git repo, or test suite.
 ## Conventions
 
 - PixInsight code style: 3-space indent, braces on their own lines, spaces inside parentheses.
+- Under `#engine v8`, `HorizontalSizer`, `VerticalSizer` and `NumericControl` are native classes. Do not `#include` `Sizer.jsh` or `NumericControl.jsh`, because they redeclare those classes and the script fails to compile. Headers that only hold `#define` constants (`TextAlign.jsh`, `StdIcon.jsh` …) are safe to include.
+- Native classes such as `Dialog` must be subclassed with `var X = class extends Dialog { constructor() { super(); … } }`. The legacy `this.__base__ = Dialog; this.__base__()` pattern throws "cannot be invoked without 'new'". Top-level declarations use `var`/`function`, never `let`/`const`/`class`, because the V8 runtime can persist between runs and a second run would fail with "already declared".
 - The script is macOS-specific (default exe path, `.app` bundle handling, `/usr/bin/open`).
 - Defaults should match GraXpert's own defaults (its `preferences.json` / `-h`).

@@ -21,9 +21,10 @@
 #include <pjsr/ColorSpace.jsh>
 #include <pjsr/DataType.jsh>
 #include <pjsr/ImageOp.jsh>
-#include <pjsr/NumericControl.jsh>
 #include <pjsr/SampleType.jsh>
-#include <pjsr/Sizer.jsh>
+#include <pjsr/StdButton.jsh>
+#include <pjsr/StdIcon.jsh>
+#include <pjsr/TextAlign.jsh>
 #include <pjsr/UndoFlag.jsh>
 
 #define TITLE "GraXpertLocal"
@@ -33,16 +34,16 @@
 #define PREVIEW_SIZE 512
 #define MIN_GRAXPERT "4.0.0"
 
-const CMD_AI_BGE = 0, CMD_SAMPLE_FREE = 1, CMD_DENOISE = 2, CMD_GRID = 3;
-const GRID_METHODS = [ "RBF", "Kriging", "Splines" ];
+var CMD_AI_BGE = 0, CMD_SAMPLE_FREE = 1, CMD_DENOISE = 2, CMD_GRID = 3;
+var GRID_METHODS = [ "RBF", "Kriging", "Splines" ];
 // Minimum background points per method (GraXpert refuses fewer).
-const GRID_MIN_POINTS = { RBF: 1, Kriging: 2, Splines: 16 };
-const DOWNSAMPLE = [ 1, 2, 4, 8 ];
-const MODEL_ROOT = File.homeDirectory + "/Library/Application Support/GraXpert/";
-const EXPORT_DIR = File.homeDirectory + "/GraXpertLocal";
-const GUI_PREFS = MODEL_ROOT + "preferences.json";
+var GRID_MIN_POINTS = { RBF: 1, Kriging: 2, Splines: 16 };
+var DOWNSAMPLE = [ 1, 2, 4, 8 ];
+var MODEL_ROOT = File.homeDirectory + "/Library/Application Support/GraXpert/";
+var EXPORT_DIR = File.homeDirectory + "/GraXpertLocal";
+var GUI_PREFS = MODEL_ROOT + "preferences.json";
 // Fallback remote model versions (GraXpert 4.0.0 `-h`), used when `-h` can't be parsed.
-const REMOTE_MODELS = {
+var REMOTE_MODELS = {
    "bge-ai-models": [ "1.0.1", "1.0.0" ],
    "denoise-ai-models": [ "3.0.2", "3.0.1", "3.0.0", "2.0.0", "1.1.0", "1.0.0" ]
 };
@@ -50,7 +51,7 @@ const REMOTE_MODELS = {
 // ---------------------------------------------------------------------------
 // Parameters: defaults mirror GraXpert's own defaults (preferences.json / -h).
 
-const FIELDS = {
+var FIELDS = {
    exe: DataType_String, command: DataType_Int32, gpu: DataType_Boolean,
    replaceImage: DataType_Boolean, showLogs: DataType_Boolean,
    correction: DataType_Int32, showBackground: DataType_Boolean,
@@ -299,7 +300,7 @@ function AbortError()
 
 // GraXpert log lines bracketing an AI model download. Killing GraXpert between
 // them leaves a corrupt model folder, so Abort is disabled meanwhile.
-const DOWNLOAD_START = "not found locally, downloading", DOWNLOAD_END = "download successful";
+var DOWNLOAD_START = "not found locally, downloading", DOWNLOAD_END = "download successful";
 
 // Blocks until the process exits; keeps the GUI alive and honours console Abort.
 // Output is always buffered; it is echoed live only when showLogs is set.
@@ -320,7 +321,7 @@ function runProcess( exe, args, showLogs )
    {
       while ( !P.waitForFinished( 250 ) )
       {
-         processEvents();
+         CoreApplication.processEvents();
          let d = log.lastIndexOf( DOWNLOAD_START ) > log.lastIndexOf( DOWNLOAD_END );
          if ( d != downloading )
          {
@@ -373,7 +374,7 @@ function runGraXpert( p, input, output, overrides )
 
 // "GraXpert version: 4.0.0 release: Charon" -> "4.0.0"; null if unparseable.
 // Cached per executable path: `-v` costs about a second.
-const versionCache = {};
+var versionCache = {};
 function graxpertVersion( exe )
 {
    if ( !( exe in versionCache ) )
@@ -395,7 +396,7 @@ function parseRemoteModels( log )
 
 // Remote model versions as GraXpert itself reports them, newest first.
 // Cached per executable and kind: each `-h` costs about a second.
-const remoteCache = {};
+var remoteCache = {};
 function remoteModels( exe, kind )
 {
    let key = exe + "|" + kind;
@@ -825,346 +826,347 @@ function DenoiseFull()
 // ---------------------------------------------------------------------------
 // Dialog
 
-function GraXpertLocalDialog( p )
+var GraXpertLocalDialog = class extends Dialog
 {
-   this.__base__ = Dialog;
-   this.__base__();
-   this.windowTitle = TITLE + " " + VERSION;
-   this.resetRequested = false;
-   let dialog = this;
-   let preview = new DenoisePreview;
-   const labelWidth = this.font.width( "Threshold:MMMM" );
-
-   function label( parent, text )
+   constructor( p )
    {
-      let l = new Label( parent );
-      l.text = text;
-      l.minWidth = labelWidth;
-      l.textAlignment = TextAlign_Right | TextAlign_VertCenter;
-      return l;
-   }
+      super();
+      this.windowTitle = TITLE + " " + VERSION;
+      this.resetRequested = false;
+      let dialog = this;
+      let preview = new DenoisePreview;
+      const labelWidth = this.font.width( "Threshold:MMMM" );
 
-   function row( parent, text, control )
-   {
-      let s = new HorizontalSizer;
-      s.spacing = 6;
-      s.add( label( parent, text ) );
-      s.add( control, 100 );
-      return s;
-   }
-
-   function numeric( parent, text, value, min, max, precision, onChange, tip )
-   {
-      let n = new NumericControl( parent );
-      n.label.text = text;
-      n.label.minWidth = labelWidth;
-      n.setRange( min, max );
-      n.setPrecision( precision );
-      n.slider.setRange( 0, 1000 );
-      n.setValue( value );
-      n.onValueUpdated = onChange;
-      if ( tip )
-         n.toolTip = tip;
-      return n;
-   }
-
-   function check( parent, text, value, onChange )
-   {
-      let c = new CheckBox( parent );
-      c.text = text;
-      c.checked = value;
-      c.onCheck = onChange;
-      return c;
-   }
-
-   function button( parent, text, tip, onClick )
-   {
-      let b = new PushButton( parent );
-      b.text = text;
-      b.toolTip = tip;
-      b.onClick = () =>
+      function label( parent, text )
       {
-         try { onClick(); }
-         catch ( e ) { if ( !( e instanceof AbortError ) ) new MessageBox( e.message, TITLE ).execute(); console.criticalln( e.message ); }
+         let l = new Label( parent );
+         l.text = text;
+         l.minWidth = labelWidth;
+         l.textAlignment = TextAlign_Right | TextAlign_VertCenter;
+         return l;
+      }
+
+      function row( parent, text, control )
+      {
+         let s = new HorizontalSizer;
+         s.spacing = 6;
+         s.add( label( parent, text ) );
+         s.add( control, 100 );
+         return s;
+      }
+
+      function numeric( parent, text, value, min, max, precision, onChange, tip )
+      {
+         let n = new NumericControl( parent );
+         n.label.text = text;
+         n.label.minWidth = labelWidth;
+         n.setRange( min, max );
+         n.setPrecision( precision );
+         n.slider.setRange( 0, 1000 );
+         n.setValue( value );
+         n.onValueUpdated = onChange;
+         if ( tip )
+            n.toolTip = tip;
+         return n;
+      }
+
+      function check( parent, text, value, onChange )
+      {
+         let c = new CheckBox( parent );
+         c.text = text;
+         c.checked = value;
+         c.onCheck = onChange;
+         return c;
+      }
+
+      function button( parent, text, tip, onClick )
+      {
+         let b = new PushButton( parent );
+         b.text = text;
+         b.toolTip = tip;
+         b.onClick = () =>
+         {
+            try { onClick(); }
+            catch ( e ) { if ( !( e instanceof AbortError ) ) new MessageBox( e.message, TITLE ).execute(); console.criticalln( e.message ); }
+         };
+         return b;
+      }
+
+      function group( title, items )
+      {
+         let g = new GroupBox( dialog );
+         g.title = title;
+         g.sizer = new VerticalSizer;
+         g.sizer.margin = 6;
+         g.sizer.spacing = 4;
+         for ( let i of items( g ) )
+            g.sizer.add( i );
+         return g;
+      }
+
+      function target()
+      {
+         let v = dialog.viewList.currentView;
+         if ( v.isNull )
+            throw new Error( "Select a target view." );
+         return v;
+      }
+
+      // --- general
+      this.viewList = new ViewList( this );
+      this.viewList.getAll();
+      if ( !ImageWindow.activeWindow.isNull )
+         this.viewList.currentView = ImageWindow.activeWindow.currentView;
+
+      this.exeEdit = new Edit( this );
+      this.exeEdit.text = p.exe;
+      this.exeEdit.toolTip = "Path to the GraXpert executable inside the app bundle.";
+      this.exeEdit.onEditCompleted = function() { p.exe = this.text.trim(); };
+
+      this.exeButton = new ToolButton( this );
+      this.exeButton.icon = this.scaledResource( ":/icons/select-file.png" );
+      this.exeButton.setScaledFixedSize( 22, 22 );
+      this.exeButton.toolTip = "Select GraXpert.app (or the executable itself).";
+      this.exeButton.onClick = function()
+      {
+         let fd = new OpenFileDialog;
+         fd.caption = "Select GraXpert.app";
+         fd.initialPath = "/Applications";
+         fd.filters = [ [ "Applications", "*.app" ], [ "All files", "*" ] ];
+         if ( fd.execute() )
+            dialog.exeEdit.text = p.exe = exeFromBundle( fd.fileName );
       };
-      return b;
-   }
+      this.exeSizer = new HorizontalSizer;
+      this.exeSizer.spacing = 4;
+      this.exeSizer.add( this.exeEdit, 100 );
+      this.exeSizer.add( this.exeButton );
 
-   function group( title, items )
-   {
-      let g = new GroupBox( dialog );
-      g.title = title;
-      g.sizer = new VerticalSizer;
-      g.sizer.margin = 6;
-      g.sizer.spacing = 4;
-      for ( let i of items( g ) )
-         g.sizer.add( i );
-      return g;
-   }
+      this.commandCombo = new ComboBox( this );
+      this.commandCombo.addItem( "AI background extraction" );
+      this.commandCombo.addItem( "Sample-free background extraction" );
+      this.commandCombo.addItem( "AI denoising" );
+      this.commandCombo.addItem( "Background extraction with GraXpert points (RBF/Kriging/Splines)" );
+      this.commandCombo.currentItem = p.command;
 
-   function target()
-   {
-      let v = dialog.viewList.currentView;
-      if ( v.isNull )
-         throw new Error( "Select a target view." );
-      return v;
-   }
+      this.modelCombo = new ComboBox( this );
+      this.modelCombo.editEnabled = true;
+      this.modelCombo.toolTip = "AI model version. * = not stored locally, GraXpert downloads it first (do not abort the download).";
+      let modelField = () => p.command == CMD_DENOISE ? "denoiseAiVersion" : "bgeAiVersion";
+      let usesModel = () => p.command == CMD_AI_BGE || p.command == CMD_DENOISE;
+      this.syncModel = function()
+      {
+         if ( usesModel() )
+            p[modelField()] = cleanVersion( dialog.modelCombo.editText );
+      };
+      this.fillModels = function()
+      {
+         dialog.modelCombo.clear();
+         if ( !usesModel() )
+            return;
+         let items = modelChoices( p.exe, p.command == CMD_DENOISE ? "denoise-ai-models" : "bge-ai-models" );
+         for ( let i of items )
+            dialog.modelCombo.addItem( i );
+         let cur = cleanVersion( p[modelField()] );
+         let idx = items.findIndex( i => cleanVersion( i ) == cur );
+         if ( idx >= 0 )
+            dialog.modelCombo.currentItem = idx;
+         else
+            dialog.modelCombo.editText = cur;
+      };
+      this.downloadButton = button( this, "Download", "Install the selected AI model now (\"latest\" = newest remote " +
+                                    "version), so a later run does not stop to download it.",
+                                    () => { dialog.syncModel(); downloadModel( p ); dialog.fillModels(); } );
+      let modelSizer = new HorizontalSizer;
+      modelSizer.spacing = 4;
+      modelSizer.add( this.modelCombo, 100 );
+      modelSizer.add( this.downloadButton );
+      this.modelRow = row( this, "AI model:", modelSizer );
 
-   // --- general
-   this.viewList = new ViewList( this );
-   this.viewList.getAll();
-   if ( !ImageWindow.activeWindow.isNull )
-      this.viewList.currentView = ImageWindow.activeWindow.currentView;
+      // --- AI background extraction
+      // Shared by AI and grid extraction (both map to -smoothing).
+      this.aiBgeGroup = group( "Background model", g => [
+         numeric( g, "Smoothing:", p.smoothing, 0, 1, 3, v => p.smoothing = v,
+                  "Smoothing of the background model; 0 is usually best for AI." ) ] );
 
-   this.exeEdit = new Edit( this );
-   this.exeEdit.text = p.exe;
-   this.exeEdit.toolTip = "Path to the GraXpert executable inside the app bundle.";
-   this.exeEdit.onEditCompleted = function() { p.exe = this.text.trim(); };
+      // --- grid extraction from GraXpert GUI points
+      this.prefsEdit = new Edit( this );
+      this.prefsEdit.text = p.prefsFile;
+      this.prefsEdit.toolTip = "GraXpert preferences file holding the background points. GraXpert writes it when its window is closed.";
+      this.prefsEdit.onEditCompleted = function() { p.prefsFile = this.text.trim(); };
+      this.gridCombo = new ComboBox( this );
+      this.gridCombo.addItem( "As set in GraXpert" );
+      for ( let m of GRID_METHODS )
+         this.gridCombo.addItem( m );
+      this.gridCombo.currentItem = p.gridMethod;
+      this.gridCombo.onItemSelected = i => p.gridMethod = i;
+      this.gridGroup = group( "GraXpert background points", g => [
+         row( g, "Preferences:", this.prefsEdit ),
+         row( g, "Method:", this.gridCombo ),
+         button( g, "Check points", "Validate the preferences file against the target image.",
+                 () => { p.prefsFile = dialog.prefsEdit.text.trim(); checkGridPrefs( p, target().image ); } ) ] );
 
-   this.exeButton = new ToolButton( this );
-   this.exeButton.icon = this.scaledResource( ":/icons/select-file.png" );
-   this.exeButton.setScaledFixedSize( 22, 22 );
-   this.exeButton.toolTip = "Select GraXpert.app (or the executable itself).";
-   this.exeButton.onClick = function()
-   {
-      let fd = new OpenFileDialog;
-      fd.caption = "Select GraXpert.app";
-      fd.initialPath = "/Applications";
-      fd.filters = [ [ "Applications", "*.app" ], [ "All files", "*" ] ];
-      if ( fd.execute() )
-         dialog.exeEdit.text = p.exe = exeFromBundle( fd.fileName );
-   };
-   this.exeSizer = new HorizontalSizer;
-   this.exeSizer.spacing = 4;
-   this.exeSizer.add( this.exeEdit, 100 );
-   this.exeSizer.add( this.exeButton );
+      // --- Sample-free background extraction
+      this.downsampleCombo = new ComboBox( this );
+      for ( let d of DOWNSAMPLE )
+         this.downsampleCombo.addItem( String( d ) );
+      this.downsampleCombo.currentItem = p.sfDownsample;
+      this.downsampleCombo.onItemSelected = i => p.sfDownsample = i;
+      this.degreeSpin = new SpinBox( this );
+      this.degreeSpin.setRange( 1, 6 );
+      this.degreeSpin.value = p.sfDegree;
+      this.degreeSpin.onValueUpdated = v => p.sfDegree = v;
+      this.sfGroup = group( "Sample-free background extraction", g => [
+         numeric( g, "Scale:", p.sfScale, 1, 10, 2, v => p.sfScale = v,
+                  "Size of structures treated as background; higher = broader model." ),
+         numeric( g, "Smoothing:", p.sfSmoothness, 0, 10, 3, v => p.sfSmoothness = v,
+                  "Final smoothing of the background model." ),
+         check( g, "Structure protection", p.sfProtect, on => p.sfProtect = on ),
+         numeric( g, "Threshold:", p.sfThreshold, 0, 1, 3, v => p.sfThreshold = v,
+                  "Brightness difference where protection starts; lower protects fainter structures." ),
+         numeric( g, "Amount:", p.sfAmount, 0, 1, 3, v => p.sfAmount = v,
+                  "How far protected regions extend around detected structures." ),
+         check( g, "Simplified model (fit polynomial first)", p.sfSimplified, on => p.sfSimplified = on ),
+         row( g, "Polynomial degree:", this.degreeSpin ),
+         row( g, "Down sample:", this.downsampleCombo ) ] );
 
-   this.commandCombo = new ComboBox( this );
-   this.commandCombo.addItem( "AI background extraction" );
-   this.commandCombo.addItem( "Sample-free background extraction" );
-   this.commandCombo.addItem( "AI denoising" );
-   this.commandCombo.addItem( "Background extraction with GraXpert points (RBF/Kriging/Splines)" );
-   this.commandCombo.currentItem = p.command;
+      // --- shared background options
+      this.correctionCombo = new ComboBox( this );
+      this.correctionCombo.addItem( "Subtraction" );
+      this.correctionCombo.addItem( "Division" );
+      this.correctionCombo.currentItem = p.correction;
+      this.correctionCombo.toolTip = "Subtraction for most cases; Division for strong vignetting.";
+      this.correctionCombo.onItemSelected = i => p.correction = i;
+      this.bgOptGroup = group( "Background options", g => [
+         row( g, "Correction:", this.correctionCombo ),
+         check( g, "Show background model", p.showBackground, on => p.showBackground = on ) ] );
 
-   this.modelCombo = new ComboBox( this );
-   this.modelCombo.editEnabled = true;
-   this.modelCombo.toolTip = "AI model version. * = not stored locally, GraXpert downloads it first (do not abort the download).";
-   let modelField = () => p.command == CMD_DENOISE ? "denoiseAiVersion" : "bgeAiVersion";
-   let usesModel = () => p.command == CMD_AI_BGE || p.command == CMD_DENOISE;
-   this.syncModel = function()
-   {
-      if ( usesModel() )
-         p[modelField()] = cleanVersion( dialog.modelCombo.editText );
-   };
-   this.fillModels = function()
-   {
-      dialog.modelCombo.clear();
-      if ( !usesModel() )
-         return;
-      let items = modelChoices( p.exe, p.command == CMD_DENOISE ? "denoise-ai-models" : "bge-ai-models" );
-      for ( let i of items )
-         dialog.modelCombo.addItem( i );
-      let cur = cleanVersion( p[modelField()] );
-      let idx = items.findIndex( i => cleanVersion( i ) == cur );
-      if ( idx >= 0 )
-         dialog.modelCombo.currentItem = idx;
-      else
-         dialog.modelCombo.editText = cur;
-   };
-   this.downloadButton = button( this, "Download", "Install the selected AI model now (\"latest\" = newest remote " +
-                                 "version), so a later run does not stop to download it.",
-                                 () => { dialog.syncModel(); downloadModel( p ); dialog.fillModels(); } );
-   let modelSizer = new HorizontalSizer;
-   modelSizer.spacing = 4;
-   modelSizer.add( this.modelCombo, 100 );
-   modelSizer.add( this.downloadButton );
-   this.modelRow = row( this, "AI model:", modelSizer );
+      // --- denoising
+      this.batchSpin = new SpinBox( this );
+      this.batchSpin.setRange( 1, 32 );
+      this.batchSpin.value = p.batchSize;
+      this.batchSpin.toolTip = "Tiles processed in parallel; high values may run out of memory.";
+      this.batchSpin.onValueUpdated = v => p.batchSize = v;
+      this.dnGroup = group( "AI denoising", g => [
+         numeric( g, "Strength:", p.strength, 0, 2, 3, v => { p.strength = v; preview.update( v ); },
+                  "0 = original, 1 = AI result; values above 1 strengthen further." ),
+         row( g, "Batch size:", this.batchSpin ),
+         button( g, "Realtime preview", "Denoise a " + PREVIEW_SIZE + " px centre crop (or the whole selected preview) once; " +
+                 "moving Strength then updates the preview instantly.",
+                 () => { dialog.syncModel(); preview.open( p, target() ); } ) ] );
 
-   // --- AI background extraction
-   // Shared by AI and grid extraction (both map to -smoothing).
-   this.aiBgeGroup = group( "Background model", g => [
-      numeric( g, "Smoothing:", p.smoothing, 0, 1, 3, v => p.smoothing = v,
-               "Smoothing of the background model; 0 is usually best for AI." ) ] );
+      // --- global
+      this.globalGroup = group( "Global", g => [
+         check( g, "Replace image (otherwise create a new one)", p.replaceImage, on => p.replaceImage = on ),
+         check( g, "Show GraXpert logs", p.showLogs, on => p.showLogs = on ),
+         check( g, "GPU acceleration (falls back to CPU on failure)", p.gpu, on => p.gpu = on ) ] );
 
-   // --- grid extraction from GraXpert GUI points
-   this.prefsEdit = new Edit( this );
-   this.prefsEdit.text = p.prefsFile;
-   this.prefsEdit.toolTip = "GraXpert preferences file holding the background points. GraXpert writes it when its window is closed.";
-   this.prefsEdit.onEditCompleted = function() { p.prefsFile = this.text.trim(); };
-   this.gridCombo = new ComboBox( this );
-   this.gridCombo.addItem( "As set in GraXpert" );
-   for ( let m of GRID_METHODS )
-      this.gridCombo.addItem( m );
-   this.gridCombo.currentItem = p.gridMethod;
-   this.gridCombo.onItemSelected = i => p.gridMethod = i;
-   this.gridGroup = group( "GraXpert background points", g => [
-      row( g, "Preferences:", this.prefsEdit ),
-      row( g, "Method:", this.gridCombo ),
-      button( g, "Check points", "Validate the preferences file against the target image.",
-              () => { p.prefsFile = dialog.prefsEdit.text.trim(); checkGridPrefs( p, target().image ); } ) ] );
+      // --- tools
+      let tools1 = new HorizontalSizer;
+      tools1.spacing = 6;
+      tools1.add( button( this, "Noise evaluation", "Print scaled noise estimates of the target to the console.",
+                          () => evaluateNoise( target() ) ) );
+      tools1.add( button( this, "Info", "Print GraXpert version, paths and AI models to the console.",
+                          () => showInfo( p ) ) );
+      tools1.addStretch();
+      let tools2 = new HorizontalSizer;
+      tools2.spacing = 6;
+      tools2.add( button( this, "Launch GraXpert", "Open the GraXpert application.", () => launchGui( p ) ) );
+      tools2.add( button( this, "Export to GraXpert", "Save the target to " + EXPORT_DIR + " and open it in GraXpert " +
+                          "(use this for deconvolution, which GraXpert 4.0.0 offers only in its GUI).",
+                          () => exportToGui( p, target() ) ) );
+      tools2.add( button( this, "Import result", "Open images saved by GraXpert into " + EXPORT_DIR + " since the last export.",
+                          () => importFromGui( target() ) ) );
+      tools2.addStretch();
+      this.toolsGroup = group( "GraXpert UI and tools", g => [ tools1, tools2 ] );
 
-   // --- Sample-free background extraction
-   this.downsampleCombo = new ComboBox( this );
-   for ( let d of DOWNSAMPLE )
-      this.downsampleCombo.addItem( String( d ) );
-   this.downsampleCombo.currentItem = p.sfDownsample;
-   this.downsampleCombo.onItemSelected = i => p.sfDownsample = i;
-   this.degreeSpin = new SpinBox( this );
-   this.degreeSpin.setRange( 1, 6 );
-   this.degreeSpin.value = p.sfDegree;
-   this.degreeSpin.onValueUpdated = v => p.sfDegree = v;
-   this.sfGroup = group( "Sample-free background extraction", g => [
-      numeric( g, "Scale:", p.sfScale, 1, 10, 2, v => p.sfScale = v,
-               "Size of structures treated as background; higher = broader model." ),
-      numeric( g, "Smoothing:", p.sfSmoothness, 0, 10, 3, v => p.sfSmoothness = v,
-               "Final smoothing of the background model." ),
-      check( g, "Structure protection", p.sfProtect, on => p.sfProtect = on ),
-      numeric( g, "Threshold:", p.sfThreshold, 0, 1, 3, v => p.sfThreshold = v,
-               "Brightness difference where protection starts; lower protects fainter structures." ),
-      numeric( g, "Amount:", p.sfAmount, 0, 1, 3, v => p.sfAmount = v,
-               "How far protected regions extend around detected structures." ),
-      check( g, "Simplified model (fit polynomial first)", p.sfSimplified, on => p.sfSimplified = on ),
-      row( g, "Polynomial degree:", this.degreeSpin ),
-      row( g, "Down sample:", this.downsampleCombo ) ] );
+      this.updateVisibility = function()
+      {
+         dialog.aiBgeGroup.visible = p.command == CMD_AI_BGE || p.command == CMD_GRID;
+         dialog.gridGroup.visible = p.command == CMD_GRID;
+         dialog.sfGroup.visible = p.command == CMD_SAMPLE_FREE;
+         dialog.bgOptGroup.visible = p.command != CMD_DENOISE;
+         dialog.dnGroup.visible = p.command == CMD_DENOISE;
+         dialog.modelCombo.enabled = dialog.downloadButton.enabled = usesModel();
+         dialog.fillModels();
+         dialog.adjustToContents();
+      };
+      this.commandCombo.onItemSelected = function( i )
+      {
+         dialog.syncModel();
+         p.command = i;
+         if ( i != CMD_DENOISE )
+            preview.close();
+         dialog.updateVisibility();
+      };
 
-   // --- shared background options
-   this.correctionCombo = new ComboBox( this );
-   this.correctionCombo.addItem( "Subtraction" );
-   this.correctionCombo.addItem( "Division" );
-   this.correctionCombo.currentItem = p.correction;
-   this.correctionCombo.toolTip = "Subtraction for most cases; Division for strong vignetting.";
-   this.correctionCombo.onItemSelected = i => p.correction = i;
-   this.bgOptGroup = group( "Background options", g => [
-      row( g, "Correction:", this.correctionCombo ),
-      check( g, "Show background model", p.showBackground, on => p.showBackground = on ) ] );
+      // --- buttons
+      this.newInstanceButton = new ToolButton( this );
+      this.newInstanceButton.icon = this.scaledResource( ":/process-interface/new-instance.png" );
+      this.newInstanceButton.setScaledFixedSize( 24, 24 );
+      this.newInstanceButton.toolTip = "New instance: drag onto an image to run, or onto the workspace for a process icon.";
+      this.newInstanceButton.onMousePress = function()
+      {
+         this.hasFocus = true;
+         p.exe = dialog.exeEdit.text.trim();
+         p.prefsFile = dialog.prefsEdit.text.trim();
+         dialog.syncModel();
+         p.exportParameters();
+         this.pushed = false;
+         this.dialog.newInstance();
+      };
 
-   // --- denoising
-   this.batchSpin = new SpinBox( this );
-   this.batchSpin.setRange( 1, 32 );
-   this.batchSpin.value = p.batchSize;
-   this.batchSpin.toolTip = "Tiles processed in parallel; high values may run out of memory.";
-   this.batchSpin.onValueUpdated = v => p.batchSize = v;
-   this.dnGroup = group( "AI denoising", g => [
-      numeric( g, "Strength:", p.strength, 0, 2, 3, v => { p.strength = v; preview.update( v ); },
-               "0 = original, 1 = AI result; values above 1 strengthen further." ),
-      row( g, "Batch size:", this.batchSpin ),
-      button( g, "Realtime preview", "Denoise a " + PREVIEW_SIZE + " px centre crop (or the whole selected preview) once; " +
-              "moving Strength then updates the preview instantly.",
-              () => { dialog.syncModel(); preview.open( p, target() ); } ) ] );
-
-   // --- global
-   this.globalGroup = group( "Global", g => [
-      check( g, "Replace image (otherwise create a new one)", p.replaceImage, on => p.replaceImage = on ),
-      check( g, "Show GraXpert logs", p.showLogs, on => p.showLogs = on ),
-      check( g, "GPU acceleration (falls back to CPU on failure)", p.gpu, on => p.gpu = on ) ] );
-
-   // --- tools
-   let tools1 = new HorizontalSizer;
-   tools1.spacing = 6;
-   tools1.add( button( this, "Noise evaluation", "Print scaled noise estimates of the target to the console.",
-                       () => evaluateNoise( target() ) ) );
-   tools1.add( button( this, "Info", "Print GraXpert version, paths and AI models to the console.",
-                       () => showInfo( p ) ) );
-   tools1.addStretch();
-   let tools2 = new HorizontalSizer;
-   tools2.spacing = 6;
-   tools2.add( button( this, "Launch GraXpert", "Open the GraXpert application.", () => launchGui( p ) ) );
-   tools2.add( button( this, "Export to GraXpert", "Save the target to " + EXPORT_DIR + " and open it in GraXpert " +
-                       "(use this for deconvolution, which GraXpert 4.0.0 offers only in its GUI).",
-                       () => exportToGui( p, target() ) ) );
-   tools2.add( button( this, "Import result", "Open images saved by GraXpert into " + EXPORT_DIR + " since the last export.",
-                       () => importFromGui( target() ) ) );
-   tools2.addStretch();
-   this.toolsGroup = group( "GraXpert UI and tools", g => [ tools1, tools2 ] );
-
-   this.updateVisibility = function()
-   {
-      dialog.aiBgeGroup.visible = p.command == CMD_AI_BGE || p.command == CMD_GRID;
-      dialog.gridGroup.visible = p.command == CMD_GRID;
-      dialog.sfGroup.visible = p.command == CMD_SAMPLE_FREE;
-      dialog.bgOptGroup.visible = p.command != CMD_DENOISE;
-      dialog.dnGroup.visible = p.command == CMD_DENOISE;
-      dialog.modelCombo.enabled = dialog.downloadButton.enabled = usesModel();
-      dialog.fillModels();
-      dialog.adjustToContents();
-   };
-   this.commandCombo.onItemSelected = function( i )
-   {
-      dialog.syncModel();
-      p.command = i;
-      if ( i != CMD_DENOISE )
+      let full = new DenoiseFull;
+      let finish = ok =>
+      {
          preview.close();
-      dialog.updateVisibility();
-   };
+         full.close();
+         if ( ok ) dialog.ok(); else dialog.cancel();
+      };
+      this.resetButton = button( this, "Reset", "Restore all parameters to defaults.",
+                                 () => { dialog.resetRequested = true; finish( false ); } );
+      this.okButton = button( this, "Apply", "Process the target view. For AI denoising the dialog stays open: " +
+                              "change Strength and Apply again to re-blend without re-running the AI.", () =>
+      {
+         let v = target();
+         p.exe = dialog.exeEdit.text.trim();
+         p.prefsFile = dialog.prefsEdit.text.trim();
+         dialog.syncModel();
+         if ( p.command != CMD_DENOISE )
+            return finish( true );
+         full.apply( p, v );
+         console.noteln( TITLE + ": done on " + v.fullId );
+      } );
+      this.cancelButton = button( this, "Close", "", () => finish( false ) );
 
-   // --- buttons
-   this.newInstanceButton = new ToolButton( this );
-   this.newInstanceButton.icon = this.scaledResource( ":/process-interface/new-instance.png" );
-   this.newInstanceButton.setScaledFixedSize( 24, 24 );
-   this.newInstanceButton.toolTip = "New instance: drag onto an image to run, or onto the workspace for a process icon.";
-   this.newInstanceButton.onMousePress = function()
-   {
-      this.hasFocus = true;
-      p.exe = dialog.exeEdit.text.trim();
-      p.prefsFile = dialog.prefsEdit.text.trim();
-      dialog.syncModel();
-      p.exportParameters();
-      this.pushed = false;
-      this.dialog.newInstance();
-   };
+      let buttons = new HorizontalSizer;
+      buttons.spacing = 6;
+      buttons.add( this.newInstanceButton );
+      buttons.add( this.resetButton );
+      buttons.addStretch();
+      buttons.add( this.okButton );
+      buttons.add( this.cancelButton );
 
-   let full = new DenoiseFull;
-   let finish = ok =>
-   {
-      preview.close();
-      full.close();
-      if ( ok ) dialog.ok(); else dialog.cancel();
-   };
-   this.resetButton = button( this, "Reset", "Restore all parameters to defaults.",
-                              () => { dialog.resetRequested = true; finish( false ); } );
-   this.okButton = button( this, "Apply", "Process the target view. For AI denoising the dialog stays open: " +
-                           "change Strength and Apply again to re-blend without re-running the AI.", () =>
-   {
-      let v = target();
-      p.exe = dialog.exeEdit.text.trim();
-      p.prefsFile = dialog.prefsEdit.text.trim();
-      dialog.syncModel();
-      if ( p.command != CMD_DENOISE )
-         return finish( true );
-      full.apply( p, v );
-      console.noteln( TITLE + ": done on " + v.fullId );
-   } );
-   this.cancelButton = button( this, "Close", "", () => finish( false ) );
+      this.sizer = new VerticalSizer;
+      this.sizer.margin = 8;
+      this.sizer.spacing = 6;
+      this.sizer.add( row( this, "Target:", this.viewList ) );
+      this.sizer.add( row( this, "GraXpert:", this.exeSizer ) );
+      this.sizer.add( row( this, "Operation:", this.commandCombo ) );
+      this.sizer.add( this.modelRow );
+      this.sizer.add( this.gridGroup );
+      this.sizer.add( this.aiBgeGroup );
+      this.sizer.add( this.sfGroup );
+      this.sizer.add( this.bgOptGroup );
+      this.sizer.add( this.dnGroup );
+      this.sizer.add( this.globalGroup );
+      this.sizer.add( this.toolsGroup );
+      this.sizer.add( buttons );
 
-   let buttons = new HorizontalSizer;
-   buttons.spacing = 6;
-   buttons.add( this.newInstanceButton );
-   buttons.add( this.resetButton );
-   buttons.addStretch();
-   buttons.add( this.okButton );
-   buttons.add( this.cancelButton );
-
-   this.sizer = new VerticalSizer;
-   this.sizer.margin = 8;
-   this.sizer.spacing = 6;
-   this.sizer.add( row( this, "Target:", this.viewList ) );
-   this.sizer.add( row( this, "GraXpert:", this.exeSizer ) );
-   this.sizer.add( row( this, "Operation:", this.commandCombo ) );
-   this.sizer.add( this.modelRow );
-   this.sizer.add( this.gridGroup );
-   this.sizer.add( this.aiBgeGroup );
-   this.sizer.add( this.sfGroup );
-   this.sizer.add( this.bgOptGroup );
-   this.sizer.add( this.dnGroup );
-   this.sizer.add( this.globalGroup );
-   this.sizer.add( this.toolsGroup );
-   this.sizer.add( buttons );
-
-   this.onClose = () => { preview.close(); full.close(); };
-   this.setMinWidth( 520 );
-   this.updateVisibility();
-}
-GraXpertLocalDialog.prototype = new Dialog;
+      this.onClose = () => { preview.close(); full.close(); };
+      this.setMinWidth( 520 );
+      this.updateVisibility();
+   }
+};
 
 // ---------------------------------------------------------------------------
 
