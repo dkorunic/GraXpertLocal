@@ -1149,6 +1149,37 @@ var GraXpertLocalDialog = class extends Dialog
       this.sizer = new VerticalSizer;
       this.sizer.margin = 8;
       this.sizer.spacing = 6;
+
+      // GraXpert app icon (PNG next to this script, 2x for Retina; skipped if missing) plus a
+      // bold name in the theme's text colour, so it reads on both light and dark themes.
+      let logoRow = new HorizontalSizer;
+      logoRow.spacing = 8;
+      logoRow.addStretch();
+      let logoFile = File.extractDirectory( #__FILE__ ) + "/GraXpertLocal-logo.png";
+      if ( File.exists( logoFile ) )
+      {
+         let logo = new Bitmap( logoFile );
+         let logoView = new Control( this );
+         logoView.setScaledFixedSize( 40, 40 );
+         logoView.onPaint = function()
+         {
+            let g = new Graphics( this );
+            g.smoothInterpolation = true;
+            g.drawScaledBitmap( this.boundsRect, logo );
+            g.end();
+         };
+         logoRow.add( logoView );
+      }
+      let logoText = new Label( this );
+      logoText.text = "GraXpert";
+      let logoFont = logoText.font;
+      logoFont.bold = true;
+      logoFont.pointSize = 1.8*logoFont.pointSize;
+      logoText.font = logoFont;
+      logoRow.add( logoText );
+      logoRow.addStretch();
+      this.sizer.add( logoRow );
+
       this.sizer.add( row( this, "Target:", this.viewList ) );
       this.sizer.add( row( this, "GraXpert:", this.exeSizer ) );
       this.sizer.add( row( this, "Operation:", this.commandCombo ) );

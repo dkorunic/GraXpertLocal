@@ -10,8 +10,8 @@ There is no build system, git repo, or test suite.
 
 ## Checking changes
 
-- Syntax check outside PixInsight. The `#` preprocessor lines must be commented out first:
-  `sed 's|^#|//#|' src/scripts/GraXpertLocal.js | node --check -`
+- Syntax check outside PixInsight. The `#` preprocessor lines must be commented out and `#__FILE__` replaced first:
+  `sed -e 's|^#|//#|' -e 's|#__FILE__|"x"|' src/scripts/GraXpertLocal.js | node --check -`
 - Check the GraXpert CLI contract directly. The default executable is `/Applications/GraXpert.app/Contents/MacOS/GraXpert`:
   `GraXpert -cli -cmd background-extraction -h` and `GraXpert -cli -cmd denoising -h`
 - Everything else (PJSR classes such as `ImageWindow`, `ExternalProcess`, `Settings`, and `Dialog`) can only be tested inside PixInsight. Install it with *Script > Feature Scripts… > Add* and choose `src/scripts/`. It then appears under *Script > Utilities > GraXpertLocal*. Say clearly when a change has not been run inside PixInsight.
