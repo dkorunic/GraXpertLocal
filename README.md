@@ -11,9 +11,12 @@ It talks to GraXpert only through GraXpert's own command-line interface. It cont
 
 ## Requirements
 
-- macOS
+- macOS, Windows or Linux
 - PixInsight
-- GraXpert 4.0.0, installed at `/Applications/GraXpert.app` (you can change the path in the dialog)
+- GraXpert 4.0.0. The default paths are below. If yours is elsewhere, set the path in the dialog.
+  - macOS: `/Applications/GraXpert.app`
+  - Windows: `C:\Program Files\GraXpert\GraXpert.exe` (the MSI default)
+  - Linux: `/usr/local/bin/GraXpert`
 
 ## Installation
 
@@ -28,7 +31,7 @@ Pick a target view and an operation, set the parameters, and click *Apply*.
 - **Replace image**: when this is on, the result replaces the target and can be undone. When it is off, the result opens in a new image window that uses the source's screen stretch.
 - **New windows** copy the source's screen stretch. When the size is unchanged, they also copy its FITS keywords and astrometric solution.
 - **Show background model**: opens the extracted background as a separate image.
-- **GPU acceleration**: if GraXpert fails with the GPU on, the script retries once on the CPU. CoreML denoising can crash.
+- **GPU acceleration**: if GraXpert fails with the GPU on, the script retries once on the CPU. Denoising with CoreML on macOS can crash.
 - **AI model**: versions marked `*` are not stored locally yet. GraXpert downloads them on first use, so don't abort the download. *Download* installs the selected version now (*latest* means the newest remote version). The list of remote versions comes from GraXpert itself.
 - **Realtime preview** (denoising): runs the AI once on a 512 px centre crop, or on the whole selected preview. After that, moving the Strength slider updates the preview instantly.
 - **Apply with denoising** keeps the dialog open. The first Apply runs the AI on the full image. Applying again with a different Strength only re-blends the result, which is instant, and always starts from the original image. Changing the target view or the model runs the AI again.
@@ -39,7 +42,7 @@ Pick a target view and an operation, set the parameters, and click *Apply*.
 ### Background extraction from GraXpert points
 
 1. Click *Export to GraXpert*. Place background points on the image in GraXpert and choose RBF, Kriging or Splines.
-2. Close GraXpert so it saves its settings, including the points, to `~/Library/Application Support/GraXpert/preferences.json`.
+2. Close GraXpert so it saves its settings, including the points, to `preferences.json`. The file is in `~/Library/Application Support/GraXpert/` on macOS, `%LOCALAPPDATA%\GraXpert\GraXpert\` on Windows, and `~/.config/GraXpert/` on Linux.
 3. Choose this operation, then click *Apply*. *Method* can override the method chosen in GraXpert. *Smoothing* and *Correction* come from the dialog.
 
 The points must have been placed on an image of the same size as the target. GraXpert doesn't check this itself, so the script refuses to run when the sizes differ. *Check points* runs the same check without processing anything.

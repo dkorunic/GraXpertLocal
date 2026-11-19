@@ -12,7 +12,7 @@
 //    (this makes the realtime preview and full-image re-apply exact: run AI once, blend locally)
 //  - `-h` lists remote AI models as "available remotely: [...]"; a model is
 //    downloaded before inference, so running on a blank image installs it.
-//  - CoreML (GPU) denoising can crash; we retry once with -gpu false.
+//  - GPU (CoreML on macOS) denoising can crash; we retry once with -gpu false.
 //  - 4.0.0 CLI has no deconvolution command; use Export/Import with the GUI.
 
 #feature-id GraXpertLocal : Utilities > GraXpertLocal
@@ -28,9 +28,17 @@
 #include <pjsr/UndoFlag.jsh>
 
 #define TITLE "GraXpertLocal"
-#define VERSION "2.3"
+#define VERSION "2.4"
 #define SETTINGS_KEY "GraXpertLocal/"
-#define DEFAULT_EXE "/Applications/GraXpert.app/Contents/MacOS/GraXpert"
+#ifeq __PI_PLATFORM__ MACOSX
+#define GX_OS "mac"
+#endif
+#ifeq __PI_PLATFORM__ MSWINDOWS
+#define GX_OS "win"
+#endif
+#ifndef GX_OS
+#define GX_OS "linux"
+#endif
 #define PREVIEW_SIZE 512
 #define MIN_GRAXPERT "4.0.0"
 
@@ -39,9 +47,41 @@ var GRID_METHODS = [ "RBF", "Kriging", "Splines" ];
 // Minimum background points per method (GraXpert refuses fewer).
 var GRID_MIN_POINTS = { RBF: 1, Kriging: 2, Splines: 16 };
 var DOWNSAMPLE = [ 1, 2, 4, 8 ];
-var MODEL_ROOT = File.homeDirectory + "/Library/Application Support/GraXpert/";
+var OS = GX_OS;
+
+// Where GraXpert (Python appdirs, appname "GraXpert") keeps its AI models and
+// preferences.json. Data and config are the same folder except on Linux.
+function envDir( name, fallback )
+{
+   let v = System.getEnvironmentVariable( name );
+   return v ? File.windowsPathToUnix( v ) : fallback;
+}
+var MODEL_ROOT, CONFIG_ROOT, DEFAULT_EXE;
+if ( OS == "mac" )
+{
+   MODEL_ROOT = CONFIG_ROOT = File.homeDirectory + "/Library/Application Support/GraXpert/";
+   DEFAULT_EXE = "/Applications/GraXpert.app/Contents/MacOS/GraXpert";
+}
+else if ( OS == "win" )
+{
+   // appdirs on Windows: %LOCALAPPDATA%\<appauthor = appname>\<appname>
+   MODEL_ROOT = CONFIG_ROOT = envDir( "LOCALAPPDATA", File.homeDirectory + "/AppData/Local" ) + "/GraXpert/GraXpert/";
+   DEFAULT_EXE = envDir( "ProgramFiles", "C:/Program Files" ) + "/GraXpert/GraXpert.exe";   // MSI default
+}
+else
+{
+   MODEL_ROOT = envDir( "XDG_DATA_HOME", File.homeDirectory + "/.local/share" ) + "/GraXpert/";
+   CONFIG_ROOT = envDir( "XDG_CONFIG_HOME", File.homeDirectory + "/.config" ) + "/GraXpert/";
+   DEFAULT_EXE = "/usr/local/bin/GraXpert";
+}
 var EXPORT_DIR = File.homeDirectory + "/GraXpertLocal";
-var GUI_PREFS = MODEL_ROOT + "preferences.json";
+var GUI_PREFS = CONFIG_ROOT + "preferences.json";
+
+// Accepts pasted Windows paths (backslashes); PJSR's File API wants '/'.
+function cleanPath( s )
+{
+   return File.windowsPathToUnix( String( s ).trim() );
+}
 // Fallback remote model versions (GraXpert 4.0.0 `-h`), used when `-h` can't be parsed.
 var REMOTE_MODELS = {
    "bge-ai-models": [ "1.0.1", "1.0.0" ],
@@ -636,6 +676,11 @@ function showInfo( p )
 
 function launchGui( p, file )
 {
+   if ( OS != "mac" )
+   {
+      ExternalProcess.startDetached( p.exe, file ? [ file ] : [] );   // throws if it cannot start
+      return;
+   }
    let args = [ "-n", "-a", appBundle( p.exe ) ];
    if ( file )
       args.push( "--args", file );
@@ -920,19 +965,22 @@ var GraXpertLocalDialog = class extends Dialog
 
       this.exeEdit = new Edit( this );
       this.exeEdit.text = p.exe;
-      this.exeEdit.toolTip = "Path to the GraXpert executable inside the app bundle.";
-      this.exeEdit.onEditCompleted = function() { p.exe = this.text.trim(); };
+      this.exeEdit.toolTip = "Path to the GraXpert executable.";
+      this.exeEdit.onEditCompleted = function() { p.exe = cleanPath( this.text ); };
 
       this.exeButton = new ToolButton( this );
       this.exeButton.icon = this.scaledResource( ":/icons/select-file.png" );
       this.exeButton.setScaledFixedSize( 22, 22 );
-      this.exeButton.toolTip = "Select GraXpert.app (or the executable itself).";
+      this.exeButton.toolTip = OS == "mac" ? "Select GraXpert.app (or the executable itself)." : "Select the GraXpert executable.";
       this.exeButton.onClick = function()
       {
          let fd = new OpenFileDialog;
-         fd.caption = "Select GraXpert.app";
-         fd.initialPath = "/Applications";
-         fd.filters = [ [ "Applications", "*.app" ], [ "All files", "*" ] ];
+         fd.caption = "Select GraXpert";
+         fd.initialPath = OS == "mac" ? "/Applications" : File.extractDrive( p.exe ) + File.extractDirectory( p.exe );
+         if ( OS == "mac" )
+            fd.filters = [ [ "Applications", "*.app" ], [ "All files", "*" ] ];
+         else if ( OS == "win" )
+            fd.filters = [ [ "Programs", "*.exe" ], [ "All files", "*" ] ];
          if ( fd.execute() )
             dialog.exeEdit.text = p.exe = exeFromBundle( fd.fileName );
       };
@@ -992,7 +1040,7 @@ var GraXpertLocalDialog = class extends Dialog
       this.prefsEdit = new Edit( this );
       this.prefsEdit.text = p.prefsFile;
       this.prefsEdit.toolTip = "GraXpert preferences file holding the background points. GraXpert writes it when its window is closed.";
-      this.prefsEdit.onEditCompleted = function() { p.prefsFile = this.text.trim(); };
+      this.prefsEdit.onEditCompleted = function() { p.prefsFile = cleanPath( this.text ); };
       this.gridCombo = new ComboBox( this );
       this.gridCombo.addItem( "As set in GraXpert" );
       for ( let m of GRID_METHODS )
@@ -1003,7 +1051,7 @@ var GraXpertLocalDialog = class extends Dialog
          row( g, "Preferences:", this.prefsEdit ),
          row( g, "Method:", this.gridCombo ),
          button( g, "Check points", "Validate the preferences file against the target image.",
-                 () => { p.prefsFile = dialog.prefsEdit.text.trim(); checkGridPrefs( p, target().image ); } ) ] );
+                 () => { p.prefsFile = cleanPath( dialog.prefsEdit.text ); checkGridPrefs( p, target().image ); } ) ] );
 
       // --- Sample-free background extraction
       this.downsampleCombo = new ComboBox( this );
@@ -1107,8 +1155,8 @@ var GraXpertLocalDialog = class extends Dialog
       this.newInstanceButton.onMousePress = function()
       {
          this.hasFocus = true;
-         p.exe = dialog.exeEdit.text.trim();
-         p.prefsFile = dialog.prefsEdit.text.trim();
+         p.exe = cleanPath( dialog.exeEdit.text );
+         p.prefsFile = cleanPath( dialog.prefsEdit.text );
          dialog.syncModel();
          p.exportParameters();
          this.pushed = false;
@@ -1128,8 +1176,8 @@ var GraXpertLocalDialog = class extends Dialog
                               "change Strength and Apply again to re-blend without re-running the AI.", () =>
       {
          let v = target();
-         p.exe = dialog.exeEdit.text.trim();
-         p.prefsFile = dialog.prefsEdit.text.trim();
+         p.exe = cleanPath( dialog.exeEdit.text );
+         p.prefsFile = cleanPath( dialog.prefsEdit.text );
          dialog.syncModel();
          if ( p.command != CMD_DENOISE )
             return finish( true );
