@@ -60,3 +60,14 @@ The points must have been placed on an image of the same size as the target. Gra
 2. GraXpert runs with `-cli -cmd background-extraction|denoising` and the selected options.
 3. The result is read back, and the temporary files are deleted.
 4. Settings are stored in PixInsight's settings and kept between sessions.
+
+## Previous work
+
+Other projects that run or use GraXpert from PixInsight:
+
+- [DeepSkyForge/GraXpert4PixInsight](https://github.com/DeepSkyForge/GraXpert4PixInsight): the closed-source GraXpert process module for PixInsight. Its author withdrew it to comply with Rule 5.5 of the Certified PixInsight Developer Program. It grew out of the author's earlier GraXpertSuite4PixInsight script, first published as `AstroDeepSky/GraXpert4PixInsight`. Those repositories are no longer online.
+- [Donutstop/GraXpertSuite4PixInsight](https://github.com/Donutstop/GraXpertSuite4PixInsight) (GPL-3.0): the GraXpertSuite4PixInsight script, last updated in March 2024. It runs AI background extraction, opens images in GraXpert for manual processing, and imports the results with their astrometric data restored.
+- [PixInsight Toolbox](https://gitlab.com/pixinsight-scripts/toolbox) by Jürgen Terpe: includes the `Graxpert.js` script (AI background extraction) and the `GraXpertDenoise.js` script. It is distributed through the [ideviceapps update repository](https://www.ideviceapps.de/graxpert-script.html).
+- [tupolev/graxpertlauncher](https://github.com/tupolev/graxpertlauncher) (GPL-3.0): GraXpertLauncher, an early feature script for AI background extraction with a correction type and smoothing.
+- [QINZY8/GraXpertDeconvolution-PixInsight](https://github.com/QINZY8/GraXpertDeconvolution-PixInsight): a script that runs GraXpert 3.x deconvolution (object-only and stars-only) from the command line.
+- [jps-34/NarrowbandStarless](https://github.com/jps-34/NarrowbandStarless) (GPL-3.0): a narrowband pipeline script whose first step is GraXpert background extraction.
